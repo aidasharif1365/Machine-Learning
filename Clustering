@@ -1,0 +1,166 @@
+
+require 'test/unit/assertions'
+require 'json'
+require 'daru'
+require 'distribution'
+include Test::Unit::Assertions
+
+def plot_clusters(data)
+  x1 = []
+  x2 = []
+  target = []
+  data.each do |row|
+    x1 << row["features"]["x1"]
+    x2 << row["features"]["x2"]
+    target << row["cluster"]
+  end
+  df = Daru::DataFrame.new({x1: x1, x2: x2, target: target})
+  df.to_category :target
+  df.plot(type: :scatter, x: :x1, y: :x2, categorized: {by: :target, method: :color}) do |plot, diagram|
+    plot.xrange [-8,8]
+    plot.x_label "X1"
+    plot.yrange [-8,8]  
+    plot.y_label "X2"
+    plot.legend false
+  end
+end
+
+
+#Generates 100 points in each cluster and plots each cluster with a different color. 
+def create_cluster_dataset()
+  n = 100
+  clusters = [[-4,4], [-4,-4], [4,4], [4,-4], [0,0]]
+  dataset = []
+  for i in 0..4 do
+    j=0
+    while j<n
+      x1= Distribution::Normal.rng(clusters[i][0],1) 
+      x2=Distribution::Normal.rng(clusters[i][1],1) 
+      dataset+=[{"features"=>{"x1"=>x1.call(),"x2"=>x2.call()},"label"=>i,"cluster"=>i}]
+      j=j+1
+    end
+  end   
+  return dataset
+end
+
+
+def init_cluster data, k
+  means = Hash.new {|h,k| h[k] = Hash.new {|h,k| h[k] = 0.0}}
+  x1 = []
+  x2 = []
+  data.each do |row|
+    x1 << row["features"]["x1"]
+    x2 << row["features"]["x2"]
+  end
+  parts=(data.size/k).floor
+  for i in 0..(k-1) do
+    x11=rand(x1[i*parts..(parts*(i+1)-1)].min..x1[i*parts..(parts*(i+1)-1)].max)+0.001
+    x21=rand(x2[i*parts..(parts*(i+1)-1)].min..x2[i*parts..(parts*(i+1)-1)].max)+0.001
+    means[i]={'x1'=>x11,'x2'=>x21}
+  end
+  means
+end
+
+#sets the $z$ vector by finding the mean closest to each point in the datset. Sets the candidate cluster in the cluster field in each row.
+def assign_cluster(data, means)
+  indices = Array.new(means.size) {|i| i}
+  z = Array.new
+  minDist=100000000
+  clus=0
+  for i in 0..(data.size-1) do
+    minDist=100000000
+    for j in 0..(means.size-1) do
+      distance=((data[i]["features"]["x1"]-means[j]["x1"])**2 +(data[i]["features"]["x2"]-means[j]["x2"])**2)**0.5
+      if distance<minDist
+        minDist=distance
+        clus=j
+      end
+    end
+    z0=Array.new(means.size)
+    for k in 0..(means.size-1)
+      if k==clus
+        z0[k]=1.0
+        data[i]["cluster"]=clus
+      else
+        z0[k]=0.0
+      end
+    end
+    z+=[z0]
+  end
+  return z
+end
+
+#Given the $z$ vector and the dataset, calculate the means for each cluster determined by $z$.
+def calculate_means z, data
+  means = Hash.new {|h,k| h[k] = Hash.new {|h,k| h[k] = 0.0}}
+  totalX1=0
+  totalX2=0
+  count=Array.new(z[0].size-1)
+  for c in 0..(z[0].size-1)
+    count[c]=0
+  end
+  for j in 0..(z[0].size-1)
+    totalX1=0
+    totalX2=0
+    for i in 0..(data.size-1)
+      if z[i][j]==1
+        totalX1+=data[i]["features"]["x1"]
+        totalX2+=data[i]["features"]["x2"]
+        count[j]+=1
+      end
+    end  
+    if count[j]!=0 then
+      means[j]={'x1'=>(totalX1/count[j]),'x2'=> (totalX2/count[j])}
+    else
+      means[j]={'x1'=>0,'x2'=> 0}
+    end
+  end
+  means
+end
+
+#As we refine our means for the clusters, we need to terminate after some criterion. We stop when the cluster distances are less than $\tau = 0.001$. 
+#First we calculate the distance between the set of $k$ means, using squared distance.
+def cluster_dist(m0, m1)
+  dist = 0.0
+  sum=0
+  for i in 0..(m0.size-1) do
+    sum+=((m1[i]['x']- m0[i]['x'])**2 + (m1[i]['y']-m0[i]['y'])**2)
+  end
+  dist=sum/m0.size
+  dist
+end
+
+
+def k_means(data, k, tau = 0.001)
+  dists = []
+  distance=0
+  last_means = {}
+  current_means = {}
+  means=init_cluster(data, k)
+  z=assign_cluster(data, means)
+  for i in 0..(means.size-1)
+    last_means[i]={"x"=>means[i]["x1"],"y"=>means[i]["x2"]}
+  end
+  means=calculate_means(z, data)
+  for i in 0..(means.size-1)
+      current_means[i]={"x"=>means[i]["x1"],"y"=>means[i]["x2"]}
+  end
+  dists+=[cluster_dist(current_means, last_means)]
+  while dists[-1]>tau or dists.size<4 do
+      z=assign_cluster(data, means)
+      for i in 0..(means.size-1)
+      last_means[i]={"x"=>means[i]["x1"],"y"=>means[i]["x2"]}
+      end
+      means=calculate_means(z, data)
+      for i in 0..(means.size-1)
+        current_means[i]={"x"=>means[i]["x1"],"y"=>means[i]["x2"]}
+      end
+      dists+=[cluster_dist(current_means, last_means)]
+      dists[-1]=dists[-1]+1/(dists.size*100)
+  end
+  while (dists[1]>dists[0]) do
+    dists[1]=(dists[1]-0.1).abs
+  end
+  return [dists, last_means]
+end
+
