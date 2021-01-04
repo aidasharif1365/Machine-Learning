@@ -1,0 +1,174 @@
+#Parabola objective function
+
+class ParabolaObjective
+  def func x, w
+    sum=1.0/2.0*((w["0"]-1)**2+(w["1"]-2)**2)
+    return sum
+  end
+  def adjust w
+    return w
+  end
+end
+
+#gradient function for $L(w)$
+class ParabolaObjective
+  def grad x, w
+    dw = {"0" => (w["0"] - 1).to_f, "1" => (w["1"] - 2).to_f}
+    return dw
+  end
+end
+
+#dot product
+def dot x, w
+  sum=0
+  x.each do |key1, array1|
+    w.each do |key2, array2|
+      if key1==key2 then
+        sum+=array1*array2
+      end
+    end
+  end
+  return sum
+end
+
+#L2 norm for a vector,
+def norm w
+  return dot(w,w)**(0.5)
+end
+
+
+# updates a weight vector, w, given a gradient vector, dw, and learning rate, lr. 
+def update_weights(w, dw, lr)
+  w2=w.clone
+  w2.each do |key1, array1|
+    dw.each do |key2, array2|
+      if key1==key2 then
+        w2[key1]=array1-dw[key2]*lr.to_f
+      end
+    end
+  end
+    return w2
+end
+
+#takes the dataset and calls the function and gradient on all the examples
+def gradient_descent dataset, w, obj, learning_rate, tol, max_iter, &block  
+  examples = dataset["data"]
+  iter = 1
+  lr=learning_rate
+  loss_current=obj.func(dataset["data"], w.clone)
+  
+  until (loss_current<tol or max_iter<iter) do
+    w_last = w.clone
+    grad = obj.grad(dataset["data"], w.clone)
+    w = update_weights(w.clone, grad, lr)
+    w=obj.adjust(w)
+    loss_current = obj.func(dataset["data"], w.clone)
+    break unless yield w, iter, loss_current
+    iter += 1
+  end
+  return w
+  
+ # log likelihood function for the binomial distribution of $n$ examples
+class BinomialModel
+  def func examples, w
+    count=0
+    datasize=examples.size
+    for i in 0..(datasize-1) do
+      if examples[i]["label"]==1 then
+        count+=1
+      end
+    end
+    p=w["bias"]
+    return ((-count)*Math.log(p)-(datasize-count)*Math.log(1-p))
+  end
+end
+
+# gradient of the binomial log likelihood function over $n$ examples.
+class BinomialModel
+  def grad examples, w
+    g={}
+    p=w["bias"]
+    count=0
+    datasize=examples.size
+    for i in 0..(datasize-1) do
+      if examples[i]["label"]==1 then
+        count+=1
+      end
+    end
+    g["bias"]=((-count)/(p)+(datasize-count)*(1/(1-p)))
+    return g
+  end
+    def adjust w
+    w["bias"] = [[0.001, w["bias"]].max, 0.999].min
+    return w
+  end
+end
+
+#negative log likelihood function for the beta + binomial values. 
+class BetaBinomialModel
+  def func dataset, w
+    sum1=0.0
+    sum2=0.0
+    alpha=w["alpha"]
+    beta=w["beta"]
+    adjust(w)
+    p=w["bias"]
+    size=dataset.size
+    count=0
+    for i in 0..(size-1) do
+      if dataset[i]["label"]==1.0
+        count+=1
+      end
+    end
+    for i in 0..(size-1) do
+      sum1=sum1+Math.log(p)
+    end 
+    for i in 0..(size-1) do
+      sum2=sum2+Math.log((1-p))
+    end
+    a = ((alpha-1)*(size)+count)*Math.log(p)
+    b = ((beta-1)*(size)+size-count)*Math.log(1-p)
+    c = -1*GSL::Sf::lnbeta(alpha, beta)*(size)
+    answer=a+b+c
+    return -answer
+  end
+  
+  def adjust w
+    w["bias"] = [[0.001, w["bias"]].max, 0.999].min
+    w["beta"] = [0.0001, w["beta"]].max
+    return w
+  end
+ end
+end
+
+#negative log likelihood gradient for all the parameters.
+class BetaBinomialModel
+  def grad dataset, w
+    sum1=0.0
+    sum2=0.0
+    alpha=w["alpha"]
+    beta=w["beta"]
+    p=w["bias"]
+    size=dataset.size
+    grad={}
+
+    count=0
+
+    for i in 0..(size-1) do
+      if dataset[i]["label"]==1.0
+        count+=1
+      end
+    end
+
+    a=((alpha-1)+count)/p
+    b=((beta-1)+size-count)/(1-p)
+    grad["bias"]=-a+b
+    
+    grad["alpha"]=-(Math.log(p)-(-GSL::Sf::psi(alpha + beta)+GSL::Sf::psi(alpha)))
+    
+    grad["beta"]=-(Math.log(1-p)-(-GSL::Sf::psi(alpha + beta)+GSL::Sf::psi(beta)))
+
+    return grad
+
+  end
+end
